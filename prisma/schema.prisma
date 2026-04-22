@@ -1,0 +1,350 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums for type safety
+enum SubscriptionStatus {
+  trial
+  active
+  paused
+  cancelled
+  expired
+  suspended
+}
+
+enum BillingEventType {
+  subscription_created
+  subscription_billed
+  subscription_upgraded
+  subscription_downgraded
+  subscription_cancelled
+  subscription_renewed
+  trial_started
+  trial_ended
+  payment_failed
+  payment_succeeded
+  refund_processed
+  proration_applied
+}
+
+enum PlanType {
+  fixed_monthly
+  fixed_yearly
+  usage_based
+  tiered
+  custom
+}
+
+enum AssetType {
+  native_xlm
+  stellar_token
+  erc20_token
+  custom
+}
+
+// Customers table - Stores user profile data
+model Customer {
+  id               String    @id @default(uuid())
+  stellarPublicKey String    @unique @db.VarChar(56)
+  stellarAddress  String?   @db.VarChar(56)
+  email            String?   @unique @db.VarChar(255)
+  displayName      String?   @db.VarChar(100)
+  avatarUrl        String?   @db.Text
+  timezone         String    @default("UTC") @db.VarChar(50)
+  language         String    @default("en") @db.VarChar(10)
+  metadata         Json      @default("{}")
+  tags             String[]  @default([])
+  createdAt        DateTime  @default(now()) @db.Timestz
+  updatedAt        DateTime  @updatedAt @db.Timestz
+  lastActiveAt     DateTime  @default(now()) @db.Timestz
+
+  // Relations
+  subscriptions Subscription[]
+  billingEvents   BillingEvent[]
+
+  @@map("customers")
+}
+
+// Merchants table - Stores off-chain merchant profile data
+model Merchant {
+  id               String    @id @default(uuid())
+  stellarPublicKey String    @unique @db.VarChar(56)
+  businessName     String    @db.VarChar(255)
+  slug             String    @unique @db.VarChar(100)
+  logoUrl          String?   @db.Text
+  websiteUrl       String?   @db.Text
+  supportEmail     String?   @db.VarChar(255)
+  description      String?   @db.Text
+  businessCategory String?   @db.VarChar(100)
+  webhookEndpoint  String?   @db.Text
+  webhookSecret    String?   @db.VarChar(255)
+  apiKeyHash       String?   @db.VarChar(255)
+  apiPermissions   Json      @default("[]")
+  defaultCurrency  String    @default("USD") @db.VarChar(3)
+  timezone         String    @default("UTC") @db.VarChar(50)
+  billingTimezone  String    @default("UTC") @db.VarChar(50)
+  isVerified       Boolean   @default(false)
+  isActive         Boolean   @default(true)
+  verificationStatus String @default("pending") @db.VarChar(20)
+  metadata         Json      @default("{}")
+  settings         Json      @default("{}")
+  createdAt        DateTime  @default(now()) @db.Timestz
+  updatedAt        DateTime  @updatedAt @db.Timestz
+  lastSyncAt       DateTime? @db.Timestz
+
+  // Relations
+  subscriptionTiers SubscriptionTier[]
+  subscriptionPlans SubscriptionPlan[]
+  subscriptions    Subscription[]
+  billingEvents    BillingEvent[]
+  subscriptionMetrics SubscriptionMetric[]
+
+  @@map("merchants")
+}
+
+// Subscription Tiers table - Defines tier levels and their properties
+model SubscriptionTier {
+  id           String  @id @default(uuid())
+  merchantId   String
+  name         String  @db.VarChar(100)
+  slug         String  @db.VarChar(100)
+  description  String?
+  level        Int
+  isDefault    Boolean @default(false)
+  isVisible    Boolean @default(true)
+  maxUsers     Int?
+  maxStorageGb Int?
+  maxApiCallsPerMonth Int?
+  customLimits Json    @default("{}")
+  features     Json    @default("[]")
+  permissions  Json    @default("[]")
+  displayOrder Int     @default(0)
+  badgeText    String? @db.VarChar(50)
+  badgeColor   String  @default("#007bff") @db.VarChar(7)
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now()) @db.Timestz
+  updatedAt    DateTime @updatedAt @db.Timestz
+
+  // Relations
+  merchant      Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  subscriptionPlans SubscriptionPlan[]
+  subscriptions   Subscription[]
+  subscriptionMetrics SubscriptionMetric[]
+
+  @@unique([merchantId, slug])
+  @@map("subscription_tiers")
+}
+
+// Subscription Plans table - Stores pricing and billing information
+model SubscriptionPlan {
+  id                    String    @id @default(uuid())
+  merchantId             String
+  tierId                 String
+  name                   String    @db.VarChar(100)
+  description            String?
+  planType               PlanType  @default(fixed_monthly)
+  basePrice              Decimal   @db.Decimal(20, 8)
+  currency               String    @default("USD") @db.VarChar(3)
+  billingIntervalMonths  Int       @default(1)
+  acceptedAssets         Json      @default("[]")
+  defaultAsset           String    @default("USDC") @db.VarChar(20)
+  assetType              AssetType @default(stellar_token)
+  trialDays              Int       @default(0)
+  trialPrice             Decimal   @default(0) @db.Decimal(20, 8)
+  usageUnit              String?   @db.VarChar(50)
+  usagePricePerUnit      Decimal?  @db.Decimal(20, 8)
+  includedUsageUnits    Int       @default(0)
+  canUpgradeTo           String[]  @default([])
+  canDowngradeTo         String[]  @default([])
+  prorationPolicy        String    @default("immediate") @db.VarChar(20)
+  discountPercentage     Decimal   @default(0) @db.Decimal(5, 2)
+  maxDiscountMonths       Int?
+  promotionalPeriods     Json      @default("[]")
+  displayOrder           Int       @default(0)
+  isPopular              Boolean   @default(false)
+  isFeatured             Boolean   @default(false)
+  isActive               Boolean   @default(true)
+  availableFrom           DateTime? @db.Timestz
+  availableUntil          DateTime? @db.Timestz
+  maxSubscribers         Int?
+  metadata               Json      @default("{}")
+  createdAt              DateTime  @default(now()) @db.Timestz
+  updatedAt              DateTime  @updatedAt @db.Timestz
+
+  // Relations
+  merchant            Merchant            @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  tier                SubscriptionTier   @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  subscriptions       Subscription[]
+  billingEvents       BillingEvent[]
+  subscriptionMetrics SubscriptionMetric[]
+
+  @@unique([merchantId, name])
+  @@map("subscription_plans")
+}
+
+// Subscriptions table - Tracks user subscriptions and their status
+model Subscription {
+  id                    String              @id @default(uuid())
+  customerId            String
+  merchantId            String
+  planId                String
+  tierId                String
+  subscriptionNumber    String              @unique @db.VarChar(20)
+  status                SubscriptionStatus   @default(trial)
+  startedAt             DateTime            @default(now()) @db.Timestz
+  trialEndsAt           DateTime?           @db.Timestz
+  currentPeriodStartsAt DateTime            @default(now()) @db.Timestz
+  currentPeriodEndsAt   DateTime            @db.Timestz
+  nextBillingAt         DateTime            @db.Timestz
+  cancelledAt           DateTime?           @db.Timestz
+  expiresAt             DateTime?           @db.Timestz
+  currentPrice          Decimal             @db.Decimal(20, 8)
+  currency              String              @default("USD") @db.VarChar(3)
+  billingAsset          String?             @db.VarChar(20)
+  lastPaidAmount        Decimal?            @db.Decimal(20, 8)
+  lastPaidAt            DateTime?           @db.Timestz
+  currentUsageUnits    Int                 @default(0)
+  usageResetAt          DateTime?           @db.Timestz
+  overageCharges        Decimal             @default(0) @db.Decimal(20, 8)
+  trialUsed             Boolean             @default(false)
+  trialConverted        Boolean             @default(false)
+  cancelReason          String?             @db.Text
+  cancelReasonCategory  String?             @db.VarChar(50)
+  autoRenew             Boolean             @default(true)
+  renewalAttempts       Int                 @default(0)
+  metadata              Json                @default("{}")
+  customAttributes      Json                @default("{}")
+  createdAt             DateTime            @default(now()) @db.Timestz
+  updatedAt             DateTime            @updatedAt @db.Timestz
+  lastStatusChangeAt    DateTime            @default(now()) @db.Timestz
+
+  // Relations
+  customer          Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  merchant          Merchant            @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  plan              SubscriptionPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  tier              SubscriptionTier    @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  subscriptionEvents SubscriptionEvent[]
+  billingEvents     BillingEvent[]
+
+  @@unique([customerId, merchantId, planId])
+  @@map("subscriptions")
+}
+
+// Subscription Events table - Tracks all subscription lifecycle events
+model SubscriptionEvent {
+  id              String            @id @default(uuid())
+  subscriptionId  String
+  eventType       BillingEventType
+  previousStatus  SubscriptionStatus?
+  newStatus       SubscriptionStatus?
+  previousPlanId  String?
+  newPlanId       String?
+  amount          Decimal?          @db.Decimal(20, 8)
+  currency        String?            @db.VarChar(3)
+  asset           String?            @db.VarChar(20)
+  usdEquivalent   Decimal?          @db.Decimal(20, 8)
+  transactionHash String?            @db.VarChar(64)
+  ledgerSequence  BigInt?
+  eventIndex      Int?
+  contractId      String?            @db.VarChar(64)
+  description     String?
+  reason          String?
+  metadata        Json               @default("{}")
+  eventTimestamp  DateTime           @default(now()) @db.Timestz
+  processedAt     DateTime           @default(now()) @db.Timestz
+
+  // Relations
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("subscription_events")
+}
+
+// Billing Events table - Immutable ledger for all billing transactions
+model BillingEvent {
+  id                    String            @id @default(uuid())
+  subscriptionId        String
+  merchantId            String
+  customerId            String
+  planId                String
+  eventType             BillingEventType
+  category              String            @db.VarChar(50)
+  amount                Decimal           @db.Decimal(20, 8)
+  currency              String            @db.VarChar(3)
+  asset                 String?            @db.VarChar(20)
+  usdEquivalent         Decimal?          @db.Decimal(20, 8)
+  pricePerUnit          Decimal?          @db.Decimal(20, 8)
+  billingPeriodStart   DateTime          @db.Timestz
+  billingPeriodEnd     DateTime          @db.Timestz
+  prorationFactor       Decimal           @default(1.0000) @db.Decimal(5, 4)
+  transactionHash      String            @db.VarChar(64)
+  ledgerSequence       BigInt
+  eventIndex            Int
+  contractId            String            @db.VarChar(64)
+  paymentStatus         String            @default("pending") @db.VarChar(20)
+  paymentMethod         String?            @db.VarChar(20)
+  paymentProcessor      String?            @db.VarChar(50)
+  failureReason         String?            @db.Text
+  refundAmount          Decimal?          @db.Decimal(20, 8)
+  refundReason          String?            @db.Text
+  refundTransactionHash String?            @db.VarChar(64)
+  discountAmount        Decimal           @default(0) @db.Decimal(20, 8)
+  discountType          String?            @db.VarChar(20)
+  discountCode          String?            @db.VarChar(50)
+  metadata              Json              @default("{}")
+  rawEventData          Json?
+  eventTimestamp        DateTime          @db.Timestz
+  ingestedAt            DateTime          @default(now()) @db.Timestz
+  processedAt           DateTime?         @db.Timestz
+
+  // Relations
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  merchant    Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  plan        SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([transactionHash, eventIndex])
+  @@map("billing_events")
+}
+
+// Subscription Metrics table - Aggregated metrics for analytics
+model SubscriptionMetric {
+  id                         String    @id @default(uuid())
+  merchantId                 String
+  planId                     String?
+  tierId                     String?
+  metricDate                 DateTime  @db.Date
+  metricPeriod               String    @db.VarChar(10)
+  newSubscriptions          Int       @default(0)
+  activeSubscriptions       Int       @default(0)
+  cancelledSubscriptions     Int       @default(0)
+  churnedSubscriptions       Int       @default(0)
+  trialConversions           Int       @default(0)
+  totalRevenue               Decimal   @default(0) @db.Decimal(20, 8)
+  totalRefunds               Decimal   @default(0) @db.Decimal(20, 8)
+  netRevenue                 Decimal   @default(0) @db.Decimal(20, 8)
+  averageRevenuePerSubscription Decimal @default(0) @db.Decimal(20, 8)
+  totalUsageUnits            Int       @default(0)
+  averageUsagePerSubscription Decimal @default(0) @db.Decimal(20, 8)
+  monthlyRecurringRevenue    Decimal   @default(0) @db.Decimal(20, 8)
+  annualRecurringRevenue     Decimal   @default(0) @db.Decimal(20, 8)
+  customerLifetimeValue      Decimal   @default(0) @db.Decimal(20, 8)
+  churnRate                  Decimal   @default(0) @db.Decimal(5, 4)
+  createdAt                  DateTime  @default(now()) @db.Timestz
+  updatedAt                  DateTime  @updatedAt @db.Timestz
+
+  // Relations
+  merchant Merchant            @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  plan     SubscriptionPlan?   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  tier     SubscriptionTier?   @relation(fields: [tierId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, planId, metricDate, metricPeriod])
+  @@map("subscription_metrics")
+}
